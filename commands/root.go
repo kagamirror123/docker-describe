@@ -18,12 +18,17 @@ import (
 	"github.com/rodaine/table"
 )
 
+type ProjectInfo struct {
+	Name            string
+	ComposeFilePath string
+	containers      []types.Container
+}
+
 func NewRootCmd(name string, dockerCli command.Cli) *cobra.Command {
 	cmd := &cobra.Command{
 		Short: "psx",
 		Use:   name,
 		Run: func(cmd *cobra.Command, _ []string) {
-			fmt.Fprintln(dockerCli.Out(), "Goodbye World!")
 
 			ctx := context.Background()
 			cli, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
@@ -39,25 +44,53 @@ func NewRootCmd(name string, dockerCli command.Cli) *cobra.Command {
 				panic(err)
 			}
 
+			prjInfos := []ProjectInfo{}
+
 			// Composeのプロジェクトごとにグループ化する
-			containersByProject := map[string][]types.Container{}
 			for _, container := range containers {
-				prjName, err := container.Labels["com.docker.compose.project"]
-				if !err {
-					prjName = "Normal"
+				prjName, ok := container.Labels["com.docker.compose.project"]
+				if !ok {
+					prjName = "Not Compose Containers"
+				}
+				composeFilePath, ok := container.Labels["com.docker.compose.project.config_files"]
+				if !ok {
+					composeFilePath = ""
 				}
 
-				c := containersByProject[prjName]
-				if c == nil {
-					c = []types.Container{}
+				var (
+					point  int
+					exists bool
+				)
+				// 存在チェック
+				for i, v := range prjInfos {
+					if v.Name == prjName {
+						exists = true
+						point = i
+					}
 				}
-				c = append(c, container)
-				containersByProject[prjName] = c
+
+				if exists {
+					prjInfos[point].containers = append(prjInfos[point].containers, container)
+				} else {
+					pInfo := ProjectInfo{
+						Name:            prjName,
+						ComposeFilePath: composeFilePath,
+						containers:      []types.Container{container},
+					}
+					prjInfos = append(prjInfos, pInfo)
+				}
 			}
 
 			// 出力
-			for k, v := range containersByProject {
-				fmt.Fprintln(dockerCli.Out(), "⭐ "+k)
+			for _, v := range prjInfos {
+				// 文字色を赤、背景色を青
+				c := color.New(color.FgBlack, color.BgYellow)
+				c.Add(color.Underline)
+				fmt.Printf("⭐ ProjectName : ")
+				c.Println(v.Name)
+				fmt.Printf("📃 ComposeFile : ")
+				c.Println(v.ComposeFilePath)
+				fmt.Println()
 
 				headerFmt := color.New(color.FgGreen, color.Underline).SprintfFunc()
 				columnFmt := color.New(color.FgYellow).SprintfFunc()
@@ -65,8 +98,14 @@ func NewRootCmd(name string, dockerCli command.Cli) *cobra.Command {
 				tbl := table.New("ID", "IMAGE", "CREATED", "COMMAND", "STATUS", "PORTS", "NAMES")
 				tbl.WithHeaderFormatter(headerFmt).WithFirstColumnFormatter(columnFmt)
 
-				for _, container := range v {
+				for _, container := range v.containers {
 					cid := container.ID[:15]
+					var image string
+					if len(container.Image) < 20 {
+						image = container.Image
+					} else {
+						image = container.Image[:20]
+					}
 					dtFromUnix := time.Unix(container.Created, 0)
 					createdAt := units.HumanDuration(time.Now().UTC().Sub(dtFromUnix)) + " ago"
 					command := container.Command[:15]
@@ -82,12 +121,12 @@ func NewRootCmd(name string, dockerCli command.Cli) *cobra.Command {
 						portPublishers = append(portPublishers, pp)
 					}
 					ports := DisplayablePorts(portPublishers)
-					tbl.AddRow(cid, container.Image, createdAt, command, container.Status, ports, name)
+					tbl.AddRow(cid, image, createdAt, command, container.Status, ports, name)
 				}
 
 				tbl.Print()
 
-				fmt.Fprintln(dockerCli.Out())
+				fmt.Println("\n\n")
 			}
 		},
 	}
