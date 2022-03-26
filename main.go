@@ -16,7 +16,7 @@ func main() {
 		manager.Metadata{
 			SchemaVersion:    "0.1.0",
 			Vendor:           "nkagamirror",
-			Version:          "0.0.1",
+			Version:          "v0.0.1",
 			ShortDescription: "this plugin display containers by compose project",
 			URL:              "https://github.com/kagamirror123/docker-psx",
 		})
